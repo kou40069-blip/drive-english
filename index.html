@@ -145,7 +145,7 @@
   }
   details.settings summary { cursor: pointer; color: var(--muted); }
   .field { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
-  .field input {
+  .field input, .field select {
     font: inherit;
     padding: 12px;
     border-radius: 10px;
@@ -226,6 +226,14 @@
       <button class="small-btn" id="testVoice" type="button">声のテスト</button>
     </div>
     <p class="muted" id="settingsMsg" style="margin-top:10px"></p>
+    <div class="field">
+      <label for="voiceSelect">相手の声</label>
+      <select id="voiceSelect"></select>
+      <p class="muted">iPhoneの設定で「高品質」の声をダウンロードすると、ここに出てきて、より自然になります。</p>
+    </div>
+    <div class="row">
+      <button class="small-btn" id="previewVoice" type="button">この声を聞く</button>
+    </div>
   </details>
 </div>
 
@@ -258,6 +266,7 @@
     recap: $("recap"), recapList: $("recapList"),
     start: $("startBtn"), stop: $("stopBtn"),
     key: $("apiKey"), saveKey: $("saveKey"), testVoice: $("testVoice"),
+    voiceSelect: $("voiceSelect"), previewVoice: $("previewVoice"),
     settings: $("settings"), settingsMsg: $("settingsMsg"),
     noSupport: $("noSupport"), noKey: $("noKey"),
   };
@@ -270,11 +279,46 @@
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
   // ---------- voice output ----------
+  const VOICE_STORE = "dep.enVoice";
+  const NOVELTY = /Albert|Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Fred|Good News|Jester|Junior|Kathy|Organ|Ralph|Superstar|Trinoids|Whisper|Wobble|Zarvox|Eddy|Flo|Grandma|Grandpa|Reed|Rocko|Sandy|Shelley/;
+
+  // Higher is more natural: downloaded premium/enhanced voices first.
+  function voiceRank(v) {
+    const id = (v.voiceURI + " " + v.name).toLowerCase();
+    if (id.includes("premium")) return 3;
+    if (id.includes("enhanced") || id.includes("拡張")) return 2;
+    if (/samantha|ava|zoe|google us|aria|jenny/.test(id)) return 1;
+    return 0;
+  }
+
+  function englishVoices() {
+    return speechSynthesis.getVoices()
+      .filter((v) => v.lang.startsWith("en") && !NOVELTY.test(v.name))
+      .sort((a, b) => voiceRank(b) - voiceRank(a) || (b.lang === "en-US") - (a.lang === "en-US"));
+  }
+
   function pickVoice(lang) {
     const voices = speechSynthesis.getVoices();
-    return voices.find((v) => v.lang === lang && /Samantha|Google US|Aria|Jenny|Ava/.test(v.name))
-      || voices.find((v) => v.lang === lang)
-      || voices.find((v) => v.lang.startsWith(lang.slice(0, 2)));
+    if (lang.startsWith("en")) {
+      const saved = store.get(VOICE_STORE);
+      return voices.find((v) => v.voiceURI === saved) || englishVoices()[0];
+    }
+    return voices
+      .filter((v) => v.lang === lang || v.lang.startsWith(lang.slice(0, 2)))
+      .sort((a, b) => voiceRank(b) - voiceRank(a))[0];
+  }
+
+  function fillVoiceSelect() {
+    const list = englishVoices();
+    if (!list.length) return;
+    const current = pickVoice("en-US");
+    ui.voiceSelect.replaceChildren(...list.map((v) => {
+      const o = document.createElement("option");
+      o.value = v.voiceURI;
+      o.textContent = v.name + "（" + v.lang + "）" + (voiceRank(v) >= 2 ? " 高品質" : "");
+      o.selected = current && v.voiceURI === current.voiceURI;
+      return o;
+    }));
   }
 
   // iOS Safari sometimes never fires onend, and drops utterances that get
@@ -622,7 +666,19 @@
     ui.settingsMsg.textContent = heard ? "聞こえました：「" + heard + "」" : "聞き取れませんでした。マイクの許可を確認してください。";
   });
 
-  if ("speechSynthesis" in window) speechSynthesis.getVoices();
+  ui.voiceSelect.addEventListener("change", () => {
+    store.set(VOICE_STORE, ui.voiceSelect.value);
+  });
+
+  ui.previewVoice.addEventListener("click", () => {
+    speechSynthesis.cancel();
+    speak("Hi! Welcome to Hawaii. What would you like to drink?", "en-US", 0.85);
+  });
+
+  if ("speechSynthesis" in window) {
+    fillVoiceSelect();
+    speechSynthesis.addEventListener("voiceschanged", fillVoiceSelect);
+  }
   refreshGate();
 })();
 </script>
